@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Wanderer Corp Activity Tooltip
-// @namespace    https://github.com/wanderer-industries/wanderer
+// @namespace    https://github.com/sherberetta/wanderer-active-corps-hover
 // @version      3.0.0
 // @description  On hover over a wormhole system node in Wanderer, show most active corps + alliances
-// @author       You
+// @author       Sherberetta
 // @match        https://wanderer.riot-formation.com/*
 // @match        https://wanderer.ltd/*
 // @match        https://*.wanderer.ltd/*
@@ -306,7 +306,7 @@
   }
 
   // ─── Core pipeline ────────────────────────────────────────────────────────
-  async function fetchCorpActivity(sysName, zkillPromise, onStep) {
+  async function fetchCorpActivity(zkillPromise, onStep) {
     const now = Date.now();
 
     onStep("zkill");
@@ -648,7 +648,6 @@
     hoverTimer = setTimeout(async () => {
       try {
         const data = await fetchCorpActivity(
-          info.name,
           zkillPromise,
           (step, done, total) => {
             if (currentSystem === info.name) showLoading(info.name, step, done, total);
