@@ -93,6 +93,9 @@
 
   const killmailCache = new Map(); // immutable — cache indefinitely
   const nameCache = new Map();     // corp/alliance id → name
+  const systemResultCache = new Map(); // systemId → { data, fetchedAt } — TTL 10 min
+
+  const RESULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
   const KM_STORE_KEY  = "wandererTooltipKM";
   const KM_MAX_BYTES  = 20 * 1024 * 1024; // 20 MB
@@ -636,7 +639,15 @@
       return;
     }
 
-    // WH — show loading header right away
+    // WH — check result cache first
+    const cached = systemResultCache.get(info.name);
+    if (cached && Date.now() - cached.fetchedAt < RESULT_TTL_MS) {
+      LOG("result cache hit:", info.name);
+      showData(info.name, cached.data);
+      return;
+    }
+
+    // Show loading header right away
     showLoading(info.name, "zkill");
 
     // Prefetch zkillboard immediately — by the time the hover delay expires it'll likely be done
@@ -653,6 +664,7 @@
             if (currentSystem === info.name) showLoading(info.name, step, done, total);
           },
         );
+        systemResultCache.set(info.name, { data, fetchedAt: Date.now() });
         if (currentSystem === info.name) showData(info.name, data);
       } catch (err) {
         if (currentSystem === info.name) showError(info.name, err.message);
@@ -687,6 +699,7 @@
     if (e.altKey && e.key === "c") {
       killmailCache.clear();
       nameCache.clear();
+      systemResultCache.clear();
       GM_setValue(KM_STORE_KEY, "[]");
       LOG("Cache cleared");
     }
