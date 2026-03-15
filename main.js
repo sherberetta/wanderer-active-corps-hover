@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Wanderer Corp Activity Tooltip
 // @namespace    https://github.com/sherberetta/wanderer-active-corps-hover
-// @version      3.0.0
+// @version      3.1.0
 // @description  On hover over a wormhole system node in Wanderer, show most active corps + alliances
 // @author       Sherberetta
 // @match        https://wanderer.riot-formation.com/*
@@ -13,8 +13,8 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @connect      esi.evetech.net
 // @connect      zkillboard.com
+// @connect      esi.evetech.net
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -26,7 +26,7 @@
   const ERR = (...a) =>
     console.error("%c[Wanderer Tooltip]", "color:#f85149;font-weight:bold", ...a);
 
-  LOG("v3.0.0 initialising");
+  LOG("v3.1.0 initialising");
 
   const HOVER_DELAY_MS = 500;
 
@@ -69,12 +69,9 @@
     #wanderer-tooltip .tt-stage.active { color:#c9d1d9; }
     #wanderer-tooltip .tt-stage.done { color:#3fb950; }
     #wanderer-tooltip .tt-stage-dot { width:6px; height:6px; border-radius:50%; background:#484f58; flex-shrink:0; }
-    #wanderer-tooltip .tt-stage.active .tt-stage-dot { background:#58a6ff; box-shadow:0 0 4px #58a6ff; }
+    #wanderer-tooltip .tt-stage.active .tt-stage-dot { background:transparent; border:2px solid #1c2128; border-top-color:#58a6ff; animation:tt-spin 0.7s linear infinite; }
     #wanderer-tooltip .tt-stage.done .tt-stage-dot { background:#3fb950; }
-    #wanderer-tooltip .tt-progress-wrap { margin-top:4px; display:flex; align-items:center; gap:8px; }
-    #wanderer-tooltip .tt-progress-bg { flex:1; background:#1c2128; border-radius:3px; height:3px; overflow:hidden; }
-    #wanderer-tooltip .tt-progress-fill { height:3px; background:#58a6ff; border-radius:3px; transition:width 0.08s linear; }
-    #wanderer-tooltip .tt-progress-count { font-size:10px; color:#8b949e; white-space:nowrap; }
+    @keyframes tt-spin { to { transform:rotate(360deg); } }
     #wanderer-tooltip .tt-error { padding:10px; color:#f85149; font-size:11px; }
     #wanderer-tooltip .tt-empty { padding:10px; color:#8b949e; font-style:italic; font-size:11px; }
     #wanderer-tooltip .tt-sov-value { font-weight:600; color:#c9d1d9; font-size:13px; }
@@ -189,39 +186,13 @@
     { key: "names",     label: "resolving names"   },
   ];
 
-  function showLoading(name, step, done, total) {
-    // For killmail progress updates, patch the bar in-place to avoid layout thrash
-    if (step === "killmails" && done > 0 && tooltip._loadingSystem === name) {
-      const fill  = tooltip.querySelector(".tt-progress-fill");
-      const count = tooltip.querySelector(".tt-progress-count");
-      if (fill && count) {
-        fill.style.width = ((done / total) * 100).toFixed(1) + "%";
-        count.textContent = `${done} / ${total}`;
-        return;
-      }
-    }
-
-    tooltip._loadingSystem = name;
-
+  function showLoading(name, step) {
     const stagesHtml = STAGES.map(({ key, label }) => {
       const idx  = STAGES.findIndex((s) => s.key === step);
       const mine = STAGES.findIndex((s) => s.key === key);
       const cls  = mine < idx ? "done" : mine === idx ? "active" : "";
-      const extra =
-        key === "killmails" && mine <= idx
-          ? `<div class="tt-progress-wrap">
-               <div class="tt-progress-bg">
-                 <div class="tt-progress-fill" style="width:${total ? ((done / total) * 100).toFixed(1) : 0}%"></div>
-               </div>
-               <span class="tt-progress-count">${total ? `${done} / ${total}` : "…"}</span>
-             </div>`
-          : "";
-      return `<div class="tt-stage ${cls}">
-        <span class="tt-stage-dot"></span>
-        <span>${label}${key === "killmails" && total && mine > idx ? ` (${total})` : ""}</span>
-      </div>${extra}`;
+      return `<div class="tt-stage ${cls}"><span class="tt-stage-dot"></span><span>${label}</span></div>`;
     }).join("");
-
     tooltip.innerHTML = `${header(name)}<div class="tt-loading-body"><div class="tt-stages">${stagesHtml}</div></div>`;
     tooltip.classList.add("visible");
   }
@@ -252,29 +223,32 @@
   }
 
   // ─── HTTP helpers ─────────────────────────────────────────────────────────
+  // GM_xmlhttpRequest for cross-origin requests that need CORS bypass (zkillboard)
   function gmFetch(url) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
-        method: "GET",
-        url,
-        timeout: 10000,
+        method: "GET", url, timeout: 10000,
         onload(r) {
-          if (r.status < 200 || r.status >= 300) {
-            reject(new Error(`HTTP ${r.status}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(r.responseText));
-          } catch (e) {
-            reject(new Error("JSON parse failed"));
-          }
+          if (r.status < 200 || r.status >= 300) { reject(new Error(`HTTP ${r.status}`)); return; }
+          try { resolve(JSON.parse(r.responseText)); } catch { reject(new Error("JSON parse failed")); }
         },
-        onerror() {
-          reject(new Error("Network error"));
+        onerror() { reject(new Error("Network error")); },
+        ontimeout() { reject(new Error("Timed out")); },
+      });
+    });
+  }
+
+  // GM_xmlhttpRequest for ESI killmail GETs — native fetch() blocked by CORS in userscript context
+  function esiFetch(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "GET", url, timeout: 10000,
+        onload(r) {
+          if (r.status < 200 || r.status >= 300) { reject(new Error(`HTTP ${r.status}`)); return; }
+          try { resolve(JSON.parse(r.responseText)); } catch { reject(new Error("JSON parse failed")); }
         },
-        ontimeout() {
-          reject(new Error("Timed out"));
-        },
+        onerror() { reject(new Error("Network error")); },
+        ontimeout() { reject(new Error("Timed out")); },
       });
     });
   }
@@ -282,28 +256,15 @@
   function gmPost(url, body) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
-        method: "POST",
-        url,
-        timeout: 10000,
+        method: "POST", url, timeout: 10000,
         headers: { "Content-Type": "application/json" },
         data: JSON.stringify(body),
         onload(r) {
-          if (r.status < 200 || r.status >= 300) {
-            reject(new Error(`HTTP ${r.status}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(r.responseText));
-          } catch (e) {
-            reject(new Error("JSON parse failed"));
-          }
+          if (r.status < 200 || r.status >= 300) { reject(new Error(`HTTP ${r.status}`)); return; }
+          try { resolve(JSON.parse(r.responseText)); } catch { reject(new Error("JSON parse failed")); }
         },
-        onerror() {
-          reject(new Error("Network error"));
-        },
-        ontimeout() {
-          reject(new Error("Timed out"));
-        },
+        onerror() { reject(new Error("Network error")); },
+        ontimeout() { reject(new Error("Timed out")); },
       });
     });
   }
@@ -322,34 +283,42 @@
     const MAX_KILLS = 200; // zkillboard returns newest-first; 200 covers any 56-day window
 
     const batch = zkbKills.slice(0, MAX_KILLS);
+    const BATCH_SIZE = 25;
     const prevCacheSize = killmailCache.size;
-    let done = 0;
-    onStep("killmails", 0, batch.length);
-    const results = await Promise.all(
-      batch.map((k) => {
-        const cacheKey = k.killmail_id;
-        if (killmailCache.has(cacheKey)) {
-          onStep("killmails", ++done, batch.length);
-          return killmailCache.get(cacheKey);
-        }
-        return gmFetch(
-          `https://esi.evetech.net/latest/killmails/${k.killmail_id}/${k.zkb.hash}/?datasource=tranquility`,
-        ).catch((e) => {
-          LOG("killmail failed:", k.killmail_id, e.message);
-          return null;
-        }).then((r) => {
-          if (r) killmailCache.set(cacheKey, {
-            time: new Date(r.killmail_time).getTime(),
-            day:  r.killmail_time.slice(0, 10),
-            participants: [r.victim, ...(r.attackers || [])].map((c) => [c.corporation_id || 0, c.alliance_id || 0]),
+    const killmails = [];
+    onStep("killmails");
+
+    for (let i = 0; i < batch.length; i += BATCH_SIZE) {
+      const chunk = batch.slice(i, i + BATCH_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map((k) => {
+          const cacheKey = k.killmail_id;
+          if (killmailCache.has(cacheKey)) return killmailCache.get(cacheKey);
+          return esiFetch(
+            `https://esi.evetech.net/latest/killmails/${k.killmail_id}/${k.zkb.hash}/?datasource=tranquility`,
+          ).catch((e) => {
+            LOG("killmail failed:", k.killmail_id, e.message);
+            return null;
+          }).then((r) => {
+            if (r) killmailCache.set(cacheKey, {
+              time: new Date(r.killmail_time).getTime(),
+              day:  r.killmail_time.slice(0, 10),
+              participants: [r.victim, ...(r.attackers || [])].map((c) => [c.corporation_id || 0, c.alliance_id || 0]),
+            });
+            return killmailCache.get(cacheKey) ?? null;
           });
-          onStep("killmails", ++done, batch.length);
-          return killmailCache.get(cacheKey) ?? null;
-        });
-      }),
-    );
-    const killmails = results.filter(Boolean);
-    LOG("killmails fetched:", killmails.length, "/", batch.length, "| cache:", killmailCache.size, "entries /", cacheBytes(killmailCache));
+        }),
+      );
+      const chunkKillmails = chunkResults.filter(Boolean);
+      killmails.push(...chunkKillmails);
+      // zkillboard returns newest-first — stop once the oldest in this chunk is beyond the cutoff
+      if (chunkKillmails.length > 0 && Math.min(...chunkKillmails.map(k => k.time)) < cutoffTs) {
+        LOG("early stop at chunk", i + BATCH_SIZE, "/", batch.length, "kills");
+        break;
+      }
+    }
+
+    LOG("killmails processed:", killmails.length, "| cache:", killmailCache.size, "entries /", cacheBytes(killmailCache));
     if (killmailCache.size > prevCacheSize) persistKillmailCache();
 
     const corpStats = new Map();
@@ -546,7 +515,7 @@
   function getSovMap() {
     if (sovMap) return Promise.resolve(sovMap);
     if (sovMapPromise) return sovMapPromise;
-    sovMapPromise = gmFetch("https://esi.evetech.net/latest/sovereignty/map/?datasource=tranquility")
+    sovMapPromise = esiFetch("https://esi.evetech.net/latest/sovereignty/map/?datasource=tranquility")
       .then((data) => {
         sovMap = new Map(data.map((e) => [e.system_id, e]));
         sovMapPromise = null;
@@ -660,8 +629,8 @@
       try {
         const data = await fetchCorpActivity(
           zkillPromise,
-          (step, done, total) => {
-            if (currentSystem === info.name) showLoading(info.name, step, done, total);
+          (step) => {
+            if (currentSystem === info.name) showLoading(info.name, step);
           },
         );
         systemResultCache.set(info.name, { data, fetchedAt: Date.now() });
